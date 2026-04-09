@@ -1,0 +1,17 @@
+{
+  "name": "과학정보부 업무포털",
+  "short_name": "과학업무포털",
+  "description": "과학정보부 구성원을 위한 통합 업무 관리 포털",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
