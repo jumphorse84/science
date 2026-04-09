@@ -1,5 +1,5 @@
-const owner = process.env.GH_RELEASE_OWNER || process.env.SCIENCE_GH_OWNER;
-const repo = process.env.GH_RELEASE_REPO || process.env.SCIENCE_GH_REPO;
+const owner = process.env.GH_RELEASE_OWNER || process.env.SCIENCE_GH_OWNER || 'jumphorse84';
+const repo = process.env.GH_RELEASE_REPO || process.env.SCIENCE_GH_REPO || 'science';
 
 /** @type {import('electron-builder').Configuration} */
 const config = {
