@@ -8,5 +8,9 @@ declare global {
       downloadUpdate: () => Promise<{ ok: boolean; reason?: string }>;
       restartToUpdate: () => Promise<{ ok: boolean; reason?: string }>;
     };
+    scienceDesktop?: {
+      notify: (payload: { title?: string; body?: string }) => Promise<{ ok: boolean }>;
+      flashFrame: (enabled: boolean) => Promise<{ ok: boolean }>;
+    };
   }
 }

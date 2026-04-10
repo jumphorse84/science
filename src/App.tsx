@@ -98,6 +98,15 @@ const formatReleaseDate = (value: string) => {
   return parsed.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
 };
 
+const extractAssigneeNames = (categories: any[]) => {
+  return Array.from(new Set(
+    categories.flatMap((category) => `${category?.assignee || ''}`
+      .split(/[\/,]/)
+      .map((name) => name.replace(/\(.*?\)/g, '').trim())
+      .filter(Boolean))
+  ));
+};
+
 const getFilePreviewType = (file: any) => {
   const source = `${file?.name || ''} ${file?.url || ''}`.toLowerCase();
   if (/\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/.test(source)) return 'image';
@@ -244,7 +253,7 @@ const storage = getStorage(app);
 // @ts-ignore
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'seokgwan-portal';
 // @ts-ignore
-const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.4';
+const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.7';
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -288,6 +297,7 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [viewMode, setViewMode] = useState('grid');
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [unreadChangeCount, setUnreadChangeCount] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [updateNotice, setUpdateNotice] = useState<{ previousVersion: string; currentVersion: string } | null>(null);
   const [updateFlow, setUpdateFlow] = useState<any>({
@@ -416,6 +426,8 @@ export default function App() {
 
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
+  const latestRemoteHistoryIdRef = useRef('');
+  const historyHydratedRef = useRef(false);
 
   useEffect(() => {
     setGreeting(getGreeting());
@@ -561,6 +573,17 @@ export default function App() {
     setFilePreview({ ...file, type });
   };
 
+  const toggleHistoryPanel = () => {
+    setIsHistoryOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setUnreadChangeCount(0);
+        window.scienceDesktop?.flashFrame?.(false);
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (!user) return;
     const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'portalData', 'main');
@@ -570,7 +593,27 @@ export default function App() {
         if (data.categories) setCategories(data.categories);
         if (data.schedules) setSchedules(data.schedules);
         if (data.equipment) setEquipment(data.equipment);
-        if (data.history) setActivityHistory(data.history);
+        if (data.history) {
+          setActivityHistory(data.history);
+
+          const latestHistory = data.history?.[0];
+          const latestId = latestHistory ? String(latestHistory.id ?? `${latestHistory.user}_${latestHistory.time}_${latestHistory.action}`) : '';
+
+          if (!historyHydratedRef.current) {
+            historyHydratedRef.current = true;
+            latestRemoteHistoryIdRef.current = latestId;
+          } else if (latestId && latestId !== latestRemoteHistoryIdRef.current) {
+            latestRemoteHistoryIdRef.current = latestId;
+            if (latestHistory?.user && latestHistory.user !== localUserName) {
+              setUnreadChangeCount((prev) => prev + 1);
+              window.scienceDesktop?.notify?.({
+                title: '새 변동사항이 있습니다',
+                body: `${latestHistory.user}: ${latestHistory.action || '업무가 업데이트되었습니다.'}`,
+              });
+              window.scienceDesktop?.flashFrame?.(true);
+            }
+          }
+        }
         if (data.userStatuses) setUserStatuses(data.userStatuses);
         if (data.memos) {
           setMemos(prev => {
@@ -609,12 +652,13 @@ export default function App() {
       }
     }, (error) => console.error("Firestore 에러:", error));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, localUserName]);
 
   useEffect(() => {
     let unsubConnected: any;
     let unsubStatus: any;
     let myStatusRef: any;
+    const knownPeople = Array.from(new Set([localUserName, ...TEACHERS, ...extractAssigneeNames(categories)]));
 
     try {
       const rtdb = getDatabase(app);
@@ -638,24 +682,23 @@ export default function App() {
       unsubStatus = onValue(allStatusRef, (snap) => {
         if (snap.exists()) {
           const statuses = snap.val();
-          const online: string[] = [];
+          const online = [...knownPeople];
           for (const [name, data] of Object.entries(statuses)) {
             // @ts-ignore
             if (data.state === 'online') online.push(name);
           }
-          if (!online.includes(localUserName)) online.push(localUserName);
           setOnlineUsersList(Array.from(new Set(online)));
         } else {
-          setOnlineUsersList([localUserName]);
+          setOnlineUsersList(knownPeople);
         }
       }, (error) => {
         console.warn("RTDB Read Error:", error);
-        setOnlineUsersList([localUserName, ...TEACHERS.filter(t => t !== localUserName).slice(0, 2)]);
+        setOnlineUsersList(knownPeople);
       });
 
     } catch (e) {
       console.warn('Realtime Database 오류. 가상 접속자를 표시합니다.', e);
-      setOnlineUsersList([localUserName, ...TEACHERS.filter(t => t !== localUserName).slice(0, 2)]);
+      setOnlineUsersList(knownPeople);
     }
 
     return () => {
@@ -665,7 +708,7 @@ export default function App() {
       if (unsubConnected) unsubConnected();
       if (unsubStatus) unsubStatus();
     };
-  }, [localUserName]);
+  }, [categories, localUserName]);
 
   const updatePortalData = async (newCategories: any[], actionMsg: string | null = null, newEquipment: any[] | null = null, newMemos: any[] | null = null) => {
     setCategories(newCategories);
@@ -1027,6 +1070,24 @@ export default function App() {
     setNewMemoText('');
   };
 
+  const handleDeleteMemo = (categoryId: string, memoId: number) => {
+    const category = categories.find((cat) => cat.id === categoryId);
+    const memo = category?.memos?.find((item: any) => item.id === memoId);
+    if (!category || !memo || memo.author !== localUserName) return;
+    if (!window.confirm('이 말풍선을 삭제하시겠습니까?')) return;
+
+    const updatedCategory = {
+      ...category,
+      memos: category.memos.filter((item: any) => item.id !== memoId),
+    };
+
+    if (activeCategory?.id === categoryId) setActiveCategory(updatedCategory);
+    updatePortalData(
+      categories.map((cat) => cat.id === categoryId ? updatedCategory : cat),
+      `'${category.title}'의 말풍선을 삭제했습니다.`
+    );
+  };
+
   const toggleReaction = (categoryId: string, memoId: number, type: string) => {
     const newCats = categories.map(cat => {
       if (cat.id === categoryId) {
@@ -1165,7 +1226,7 @@ export default function App() {
       <div className="flex h-screen w-full overflow-hidden" style={{ backgroundColor: `rgba(var(--portal-bg-rgb), var(--portal-bg-opacity))` }}>
         {/* Sidebar Navigation */}
         <aside className={`
-          ${isSidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full lg:translate-x-0 w-20'} 
+          ${isSidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full w-0 pointer-events-none'} 
           fixed lg:sticky top-0 left-0 h-screen flex flex-col transition-all duration-300 z-50
         `} style={{ 
           backgroundColor: `rgba(var(--portal-card-rgb), var(--portal-card-opacity))`,
@@ -1315,6 +1376,16 @@ export default function App() {
         </div>
       </aside>
 
+      {!isSidebarOpen && (
+        <button
+          onClick={() => setIsSidebarOpen(true)}
+          className="fixed left-4 top-24 z-[60] flex items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-4 py-2 text-sm font-black text-slate-700 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-100"
+        >
+          <ChevronRight className="h-4 w-4" />
+          메뉴 열기
+        </button>
+      )}
+
       {/* Main Content Area */}
       <div className="flex-1 flex w-full flex-col min-w-0 transition-colors duration-200" style={{ backgroundColor: 'transparent' }}>
         
@@ -1352,7 +1423,11 @@ export default function App() {
 
           <div className="flex items-center gap-4">
             {/* Online Users */}
-            <div className="flex items-center gap-2 relative">
+            <div className="relative flex items-center gap-3">
+              <div className="hidden min-w-[92px] flex-col text-right sm:flex">
+                <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">ONLINE</span>
+                <span className="text-sm font-black text-slate-700 dark:text-slate-200">{onlineUsersList.length}명 접속 중</span>
+              </div>
               <div className="flex -space-x-2">
                 {onlineUsersList.slice(0, 5).map((name, i) => (
                   <div key={i} onClick={() => { if(name === localUserName) { setMyStatusText(userStatuses[name] || ''); setIsStatusEditOpen(!isStatusEditOpen); } }}
@@ -1373,6 +1448,22 @@ export default function App() {
                 )}
               </div>
 
+              {Object.entries(userStatuses).filter(([, value]) => `${value || ''}`.trim()).length > 0 && (
+                <div className="hidden max-w-[260px] rounded-2xl border border-slate-200 bg-white/85 px-3 py-2 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/80 lg:block">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">STATUS</p>
+                  <div className="mt-1 space-y-1">
+                    {Object.entries(userStatuses)
+                      .filter(([, value]) => `${value || ''}`.trim())
+                      .slice(0, 2)
+                      .map(([name, value]) => (
+                        <p key={name} className="truncate text-xs font-bold text-slate-600 dark:text-slate-300">
+                          {name}: {value}
+                        </p>
+                      ))}
+                  </div>
+                </div>
+              )}
+
               {isStatusEditOpen && (
                 <div className="absolute top-10 right-0 bg-white dark:bg-gray-800 p-4 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 z-[100] w-64 animate-in slide-in-from-top-2">
                   <div className="flex justify-between items-center mb-3">
@@ -1387,8 +1478,13 @@ export default function App() {
               )}
             </div>
 
-            <button onClick={() => setIsHistoryOpen(!isHistoryOpen)} className={`p-2 rounded-lg transition-colors ${isHistoryOpen ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
+            <button onClick={toggleHistoryPanel} className={`relative p-2 rounded-lg transition-colors ${isHistoryOpen ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
               <Clock className="w-6 h-6" />
+              {unreadChangeCount > 0 && (
+                <span className="absolute -right-1 -top-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-black flex items-center justify-center">
+                  {unreadChangeCount > 9 ? '9+' : unreadChangeCount}
+                </span>
+              )}
             </button>
 
             <button onClick={() => setIsCategorySettingsOpen(true)} className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="부서 업무 관리">
@@ -2120,7 +2216,7 @@ export default function App() {
                           {renderMemoText(memo.text)}
                         </div>
                         
-                        <div className={`flex gap-1.5 mt-1.5 ${memo.author === localUserName ? 'pr-1' : 'pl-1'}`}>
+                        <div className={`flex flex-wrap gap-1.5 mt-1.5 ${memo.author === localUserName ? 'justify-end pr-1' : 'pl-1'}`}>
                           <button onClick={() => toggleReaction(activeCategory.id, memo.id, 'thumbsUp')} className="flex items-center text-[11px] bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-full px-2 py-0.5 shadow-sm hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors">
                             <ThumbsUp className="w-3 h-3 mr-1 text-yellow-500" /> {memo.reactions?.thumbsUp || 0}
                           </button>
@@ -2130,6 +2226,14 @@ export default function App() {
                           <button onClick={() => toggleReaction(activeCategory.id, memo.id, 'tada')} className="flex items-center text-[11px] bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-full px-2 py-0.5 shadow-sm hover:bg-blue-50 transition-colors">
                             <PartyPopper className="w-3 h-3 mr-1 text-pink-500" /> {memo.reactions?.tada || 0}
                           </button>
+                          {memo.author === localUserName && (
+                            <button
+                              onClick={() => handleDeleteMemo(activeCategory.id, memo.id)}
+                              className="flex items-center text-[11px] bg-white dark:bg-gray-700 border border-rose-200 text-rose-600 dark:border-rose-800 dark:text-rose-300 rounded-full px-2 py-0.5 shadow-sm hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors"
+                            >
+                              <Trash2 className="w-3 h-3 mr-1" /> 삭제
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))

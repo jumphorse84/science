@@ -16,3 +16,12 @@ contextBridge.exposeInMainWorld('scienceUpdater', {
     return ipcRenderer.invoke('updater:restart');
   },
 });
+
+contextBridge.exposeInMainWorld('scienceDesktop', {
+  notify(payload) {
+    return ipcRenderer.invoke('desktop:notify', payload);
+  },
+  flashFrame(enabled) {
+    return ipcRenderer.invoke('desktop:flash', enabled);
+  },
+});
