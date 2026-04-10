@@ -929,7 +929,7 @@ export default function App() {
 
   // Implementation will continue in next step
   return (
-    <div className={`min-h-screen flex bg-[#f8fafc] dark:bg-gray-950 transition-colors duration-300 ${isDarkMode ? 'dark' : ''}`}>
+    <div className={`min-h-screen w-screen overflow-x-hidden flex bg-[#f8fafc] dark:bg-gray-950 transition-colors duration-300 ${isDarkMode ? 'dark' : ''}`}>
       <style>{`
         @keyframes confettiPop { 0% { transform: translate(0, 0) scale(0.5); opacity: 1; } 100% { transform: translate(var(--tx), var(--ty)) scale(1.5) rotate(var(--rot)); opacity: 0; } }
         .animate-confetti { animation: confettiPop 2s ease-out forwards; }
@@ -978,7 +978,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex h-screen overflow-hidden" style={{ backgroundColor: `rgba(var(--portal-bg-rgb), var(--portal-bg-opacity))` }}>
+      <div className="flex h-screen w-full overflow-hidden" style={{ backgroundColor: `rgba(var(--portal-bg-rgb), var(--portal-bg-opacity))` }}>
         {/* Sidebar Navigation */}
         <aside className={`
           ${isSidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full lg:translate-x-0 w-20'} 
@@ -1132,7 +1132,7 @@ export default function App() {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 transition-colors duration-200" style={{ backgroundColor: 'transparent' }}>
+      <div className="flex-1 flex w-full flex-col min-w-0 transition-colors duration-200" style={{ backgroundColor: 'transparent' }}>
         
         {/* Top Header */}
         <header className="h-20 backdrop-blur-2xl flex items-center justify-between px-8 sm:px-12 sticky top-0 z-40 transition-colors duration-200" style={{ 
@@ -1214,7 +1214,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-3 sm:p-6 relative" style={{ fontSize: `calc(var(--portal-font-size) * var(--portal-font-scale))` }}>
-          <div className={activeCategory ? 'w-full' : 'max-w-6xl mx-auto'}>
+          <div className={activeCategory ? 'w-full max-w-none' : 'max-w-6xl mx-auto'}>
             {/* 활동 히스토리 사이드바 */}
           {isHistoryOpen && (
             <div className="absolute top-0 right-0 w-full sm:w-80 h-full bg-white/90 dark:bg-gray-800/95 backdrop-blur-md shadow-2xl border-l border-gray-200 dark:border-gray-700 z-20 rounded-l-3xl p-5 overflow-y-auto animate-in slide-in-from-right-8 duration-300">
