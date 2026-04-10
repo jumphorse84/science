@@ -1,7 +1,7 @@
 {
   "name": "science-desktop",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Science web app desktop wrapper for Windows.",
   "author": "Codex",
   "type": "module",

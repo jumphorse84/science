@@ -191,7 +191,7 @@ const storage = getStorage(app);
 // @ts-ignore
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'seokgwan-portal';
 // @ts-ignore
-const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.1';
+const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.2';
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
