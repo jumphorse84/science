@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import portalLogo from './assets/portal-logo.svg';
 import { 
   Microscope, MonitorPlay, Wifi, Radio, ShieldCheck, ArrowLeft, ChevronRight, BookOpen, Settings,
   Pencil, GripVertical, X, Save, Plus, Trash2, Paperclip, FileText, UploadCloud, Download,
@@ -243,7 +244,7 @@ const storage = getStorage(app);
 // @ts-ignore
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'seokgwan-portal';
 // @ts-ignore
-const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.3';
+const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.4';
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -1174,7 +1175,7 @@ export default function App() {
         }}>
         <div className="p-5 flex items-center gap-2.5">
           <div className="p-1 rounded-xl shadow-lg shadow-blue-600/10 border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <img src="/icon.svg" alt="Logo" className="w-7 h-7" referrerPolicy="no-referrer" />
+            <img src={portalLogo} alt="Logo" className="w-7 h-7" referrerPolicy="no-referrer" />
           </div>
           {isSidebarOpen && (
             <div className="flex flex-col">
