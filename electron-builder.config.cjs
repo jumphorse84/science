@@ -14,6 +14,7 @@ const config = {
     'dist/**/*',
     'build/icon.ico',
     'electron-main.cjs',
+    'electron-preload.cjs',
     'package.json',
   ],
   npmRebuild: false,

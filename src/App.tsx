@@ -82,6 +82,50 @@ const renderTextWithLinks = (text: string) => {
   });
 };
 
+const formatBytes = (bytes: number) => {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** exponent;
+  return `${value.toFixed(value >= 100 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+};
+
+const formatReleaseDate = (value: string) => {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+};
+
+const normalizeReleaseHighlights = (notes: any) => {
+  const fallback = [
+    { tone: '개선', title: '업데이트 준비 흐름 개선', body: '기본 설치창 대신 앱 내부에서 업데이트 안내와 적용 흐름을 확인할 수 있습니다.' },
+    { tone: '개선', title: '재시작 중심 적용', body: '다운로드가 끝나면 프로그램 재시작 버튼으로 업데이트를 적용하도록 안내합니다.' },
+    { tone: '안내', title: '기존 프로그램 유지', body: '현재 설치된 프로그램을 계속 사용하면서 새 버전만 조용히 교체하는 흐름입니다.' },
+  ];
+
+  if (!notes || (Array.isArray(notes) && notes.length === 0)) return fallback;
+
+  const lines = (Array.isArray(notes) ? notes : [notes])
+    .flatMap((note) => (typeof note === 'string' ? note.split(/\r?\n/) : []))
+    .map((line) => line.replace(/^[-*]\s*/, '').trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) return fallback;
+
+  return lines.slice(0, 6).map((line, index) => {
+    const [head, ...rest] = line.split(/[:\-]/);
+    const title = head.trim() || `업데이트 항목 ${index + 1}`;
+    const body = rest.join(' ').trim() || '이번 버전에 포함된 변경 사항입니다.';
+    const tone = line.includes('추가') || line.includes('신규')
+      ? '새 기능'
+      : line.includes('수정') || line.includes('개선') || line.includes('변경')
+        ? '개선'
+        : '안내';
+    return { tone, title, body };
+  });
+};
+
 const availableIcons: Record<string, any> = {
   Microscope, MonitorPlay, Wifi, Radio, ShieldCheck, BookOpen, Database, Laptop, Users, Lightbulb, 
   PenTool, Globe, Cpu, Video, Camera, Music, Palette, FileBox, Sprout, Zap, Settings
@@ -191,7 +235,7 @@ const storage = getStorage(app);
 // @ts-ignore
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'seokgwan-portal';
 // @ts-ignore
-const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.2';
+const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.3';
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -237,6 +281,20 @@ export default function App() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [updateNotice, setUpdateNotice] = useState<{ previousVersion: string; currentVersion: string } | null>(null);
+  const [updateFlow, setUpdateFlow] = useState<any>({
+    visible: false,
+    stage: 'idle',
+    version: '',
+    releaseName: '',
+    releaseDate: '',
+    notes: [],
+    progress: 0,
+    bytesPerSecond: 0,
+    transferred: 0,
+    total: 0,
+    errorMessage: '',
+    errorDetail: ''
+  });
   
   const [memos, setMemos] = useState<any[]>([
     { id: '1', x: 50, y: 50, color: '#fef08a', text: '더블 클릭하여 메모를 작성하세요' }
@@ -377,6 +435,86 @@ export default function App() {
       console.warn('Version check failed:', error);
     }
   }, []);
+
+  useEffect(() => {
+    if (!window.scienceUpdater?.onStatus) return;
+
+    return window.scienceUpdater.onStatus((payload: any) => {
+      setUpdateFlow((prev: any) => {
+        if (payload.status === 'available') {
+          return {
+            ...prev,
+            visible: true,
+            stage: 'available',
+            version: payload.version || prev.version,
+            releaseName: payload.releaseName || `v${payload.version || prev.version || appVersion}`,
+            releaseDate: payload.releaseDate || '',
+            notes: normalizeReleaseHighlights(payload.notes),
+            errorMessage: '',
+            errorDetail: '',
+          };
+        }
+
+        if (payload.status === 'downloading') {
+          return {
+            ...prev,
+            visible: true,
+            stage: 'downloading',
+            progress: payload.percent || 0,
+            bytesPerSecond: payload.bytesPerSecond || 0,
+            transferred: payload.transferred || 0,
+            total: payload.total || 0,
+          };
+        }
+
+        if (payload.status === 'downloaded') {
+          return {
+            ...prev,
+            visible: true,
+            stage: 'downloaded',
+            version: payload.version || prev.version,
+            releaseName: payload.releaseName || prev.releaseName,
+            releaseDate: payload.releaseDate || prev.releaseDate,
+            notes: normalizeReleaseHighlights(payload.notes || prev.notes),
+            progress: 100,
+          };
+        }
+
+        if (payload.status === 'error') {
+          return {
+            ...prev,
+            visible: true,
+            stage: 'error',
+            errorMessage: payload.message || '업데이트 처리 중 문제가 발생했습니다.',
+            errorDetail: payload.detail || '',
+          };
+        }
+
+        return prev;
+      });
+    });
+  }, []);
+
+  const handleDismissUpdateFlow = () => {
+    setUpdateFlow((prev: any) => ({ ...prev, visible: false }));
+  };
+
+  const handleDownloadUpdate = async () => {
+    if (!window.scienceUpdater?.downloadUpdate) return;
+    setUpdateFlow((prev: any) => ({
+      ...prev,
+      visible: true,
+      stage: 'downloading',
+      progress: prev.progress || 0
+    }));
+    await window.scienceUpdater.downloadUpdate();
+  };
+
+  const handleRestartToUpdate = async () => {
+    if (!window.scienceUpdater?.restartToUpdate) return;
+    setUpdateFlow((prev: any) => ({ ...prev, stage: 'restarting', visible: true }));
+    await window.scienceUpdater.restartToUpdate();
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -2358,6 +2496,166 @@ export default function App() {
           </div>
         </div>
       )}
+        {updateFlow.visible && (
+          <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-sm z-[170] flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="w-full max-w-2xl overflow-hidden rounded-[2rem] border border-white/20 bg-white/95 shadow-2xl dark:bg-slate-900/95">
+              <div className="relative overflow-hidden border-b border-slate-100 bg-gradient-to-br from-white via-sky-50 to-blue-100 px-8 py-7 dark:border-slate-800 dark:from-slate-900 dark:via-slate-900 dark:to-blue-950/60">
+                <div className="absolute right-[-48px] top-[-60px] h-40 w-40 rounded-full bg-blue-500/10 blur-2xl" />
+                <div className="absolute bottom-[-80px] left-[-40px] h-44 w-44 rounded-full bg-sky-400/10 blur-2xl" />
+                <div className="relative flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-4">
+                    <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl shadow-lg ${
+                      updateFlow.stage === 'downloaded' || updateFlow.stage === 'restarting'
+                        ? 'bg-emerald-500/15 text-emerald-600'
+                        : updateFlow.stage === 'downloading'
+                          ? 'bg-blue-500/15 text-blue-600'
+                          : updateFlow.stage === 'error'
+                            ? 'bg-rose-500/15 text-rose-600'
+                            : 'bg-blue-500/15 text-blue-600'
+                    }`}>
+                      {updateFlow.stage === 'downloaded' || updateFlow.stage === 'restarting'
+                        ? <CheckCircle2 className="h-7 w-7" />
+                        : updateFlow.stage === 'downloading'
+                          ? <DownloadCloud className="h-7 w-7" />
+                          : updateFlow.stage === 'error'
+                            ? <Bell className="h-7 w-7" />
+                            : <Sparkles className="h-7 w-7" />}
+                    </div>
+                    <div>
+                      <div className="inline-flex items-center rounded-full border border-blue-200 bg-white/80 px-3 py-1 text-[11px] font-black tracking-[0.18em] text-blue-600 dark:border-blue-900/70 dark:bg-slate-900/60 dark:text-blue-300">
+                        {updateFlow.stage === 'downloaded' || updateFlow.stage === 'restarting' ? 'UPDATE READY' : 'NEW VERSION'}
+                      </div>
+                      <h2 className="mt-4 text-[28px] font-black tracking-tight text-slate-900 dark:text-white">
+                        {updateFlow.stage === 'downloaded'
+                          ? '업데이트 준비 완료!'
+                          : updateFlow.stage === 'restarting'
+                            ? '프로그램을 다시 시작하는 중입니다'
+                            : updateFlow.stage === 'error'
+                              ? '업데이트를 완료하지 못했습니다'
+                              : `${updateFlow.version || appVersion} 업데이트가 준비되었습니다`}
+                      </h2>
+                      <p className="mt-2 text-sm font-bold leading-relaxed text-slate-500 dark:text-slate-400">
+                        {updateFlow.stage === 'downloaded' || updateFlow.stage === 'restarting'
+                          ? '설치 마법사를 다시 진행하지 않고, 프로그램만 다시 시작하면 새 버전이 적용됩니다.'
+                          : updateFlow.stage === 'error'
+                            ? updateFlow.errorMessage
+                            : '기존 프로그램을 그대로 쓰면서 새 버전만 조용히 받아올 수 있습니다.'}
+                      </p>
+                      {(updateFlow.releaseDate || updateFlow.releaseName) && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+                          {updateFlow.releaseName && <span>{updateFlow.releaseName}</span>}
+                          {updateFlow.releaseDate && <span>{formatReleaseDate(updateFlow.releaseDate)}</span>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {updateFlow.stage !== 'restarting' && (
+                    <button onClick={handleDismissUpdateFlow} className="rounded-full p-2 text-slate-400 transition-colors hover:bg-white/70 hover:text-slate-700 dark:hover:bg-slate-800">
+                      <X className="h-5 w-5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="max-h-[56vh] overflow-y-auto px-8 py-6 custom-scrollbar">
+                {updateFlow.stage === 'downloading' && (
+                  <div className="mb-6 rounded-[1.5rem] border border-blue-100 bg-blue-50/70 p-5 dark:border-blue-900/50 dark:bg-blue-950/30">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-black text-slate-900 dark:text-white">업데이트 다운로드 중</p>
+                        <p className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+                          {formatBytes(updateFlow.transferred)} / {formatBytes(updateFlow.total)} · {formatBytes(updateFlow.bytesPerSecond)}/s
+                        </p>
+                      </div>
+                      <div className="text-2xl font-black tracking-tight text-blue-600 dark:text-blue-300">
+                        {Math.round(updateFlow.progress || 0)}%
+                      </div>
+                    </div>
+                    <div className="h-3 overflow-hidden rounded-full bg-white/80 dark:bg-slate-900/70">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-blue-500 via-sky-500 to-cyan-400 transition-all duration-300"
+                        style={{ width: `${Math.max(6, Math.min(100, updateFlow.progress || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {updateFlow.stage === 'error' && (
+                  <div className="mb-6 rounded-[1.5rem] border border-rose-100 bg-rose-50/80 p-5 dark:border-rose-900/40 dark:bg-rose-950/20">
+                    <p className="text-sm font-black text-rose-700 dark:text-rose-300">{updateFlow.errorMessage}</p>
+                    {updateFlow.errorDetail && (
+                      <p className="mt-2 text-sm font-medium leading-relaxed text-rose-600/80 dark:text-rose-200/80">{updateFlow.errorDetail}</p>
+                    )}
+                  </div>
+                )}
+
+                <div className="mb-4 flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-blue-500" />
+                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">이번 업데이트 내용</h3>
+                </div>
+
+                <div className="space-y-3">
+                  {(updateFlow.notes && updateFlow.notes.length > 0 ? updateFlow.notes : normalizeReleaseHighlights(null)).map((item: any, index: number) => (
+                    <div key={`${item.title}-${index}`} className="rounded-[1.4rem] border border-slate-200 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${
+                          item.tone === '새 기능'
+                            ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
+                            : item.tone === '개선'
+                              ? 'bg-violet-100 text-violet-600 dark:bg-violet-900/40 dark:text-violet-300'
+                              : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                        }`}>
+                          {item.tone}
+                        </span>
+                        <p className="text-base font-black text-slate-900 dark:text-white">{item.title}</p>
+                      </div>
+                      <p className="text-sm font-medium leading-relaxed text-slate-500 dark:text-slate-400">{item.body}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 border-t border-slate-100 bg-white/90 px-8 py-5 dark:border-slate-800 dark:bg-slate-900/90">
+                {updateFlow.stage !== 'restarting' && (
+                  <button
+                    onClick={handleDismissUpdateFlow}
+                    className="rounded-2xl px-5 py-3 text-sm font-black text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    나중에
+                  </button>
+                )}
+                {updateFlow.stage === 'available' && (
+                  <button
+                    onClick={handleDownloadUpdate}
+                    className="rounded-2xl bg-blue-600 px-6 py-3 text-sm font-black text-white shadow-lg shadow-blue-600/20 transition-all hover:bg-blue-700"
+                  >
+                    지금 업데이트
+                  </button>
+                )}
+                {updateFlow.stage === 'downloading' && (
+                  <button
+                    disabled
+                    className="rounded-2xl bg-slate-200 px-6 py-3 text-sm font-black text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+                  >
+                    다운로드 중...
+                  </button>
+                )}
+                {(updateFlow.stage === 'downloaded' || updateFlow.stage === 'error') && (
+                  <button
+                    onClick={updateFlow.stage === 'error' ? handleDownloadUpdate : handleRestartToUpdate}
+                    className={`rounded-2xl px-6 py-3 text-sm font-black text-white shadow-lg transition-all ${
+                      updateFlow.stage === 'error'
+                        ? 'bg-rose-600 shadow-rose-600/20 hover:bg-rose-700'
+                        : 'bg-emerald-600 shadow-emerald-600/20 hover:bg-emerald-700'
+                    }`}
+                  >
+                    {updateFlow.stage === 'error' ? '다시 시도' : '프로그램 재시작'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {updateNotice && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[160] flex items-center justify-center p-4 animate-in fade-in duration-200">
             <div className="bg-white dark:bg-gray-900 w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-in zoom-in-95 duration-200">

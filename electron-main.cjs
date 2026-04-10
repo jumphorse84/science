@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, dialog } = require('electron');
+const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
 const path = require('path');
@@ -19,23 +19,33 @@ const devServerUrl = process.env.ELECTRON_RENDERER_URL || 'http://127.0.0.1:3000
 
 let mainWindow;
 let updateErrorShown = false;
-let updatePromptOpen = false;
 
 function hasUpdateConfig() {
   if (!app.isPackaged) return false;
   return fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'));
 }
 
-async function showSingleUpdateDialog(options) {
-  if (updatePromptOpen) return { response: 1 };
-  updatePromptOpen = true;
+function sendUpdaterStatus(payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('updater:status', payload);
+}
 
-  try {
-    const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-    return await dialog.showMessageBox(targetWindow, options);
-  } finally {
-    updatePromptOpen = false;
+function normalizeReleaseNotes(releaseNotes) {
+  if (!releaseNotes) return [];
+  if (typeof releaseNotes === 'string') {
+    return releaseNotes
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^[-*]\s*/, '').trim())
+      .filter(Boolean);
   }
+
+  if (Array.isArray(releaseNotes)) {
+    return releaseNotes
+      .flatMap((item) => normalizeReleaseNotes(item.note || item.releaseNotes || item))
+      .filter(Boolean);
+  }
+
+  return [];
 }
 
 function wireAutoUpdater() {
@@ -45,55 +55,77 @@ function wireAutoUpdater() {
   }
 
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.autoRunAppAfterInstall = true;
 
-  autoUpdater.on('update-available', async (info) => {
-    const result = await showSingleUpdateDialog({
-      type: 'info',
-      title: '업데이트 확인',
-      message: `새 버전 ${info.version} 이(가) 있습니다.`,
-      detail: '지금 다운로드하고 설치 준비를 진행할까요?',
-      buttons: ['다운로드', '나중에'],
-      defaultId: 0,
-      cancelId: 1,
-    });
-
-    if (result.response === 0) {
-      autoUpdater.downloadUpdate().catch((error) => {
-        console.error('[auto-update] download failed:', error);
-      });
-    }
+  autoUpdater.on('checking-for-update', () => {
+    sendUpdaterStatus({ status: 'checking' });
   });
 
-  autoUpdater.on('update-downloaded', async () => {
-    const result = await showSingleUpdateDialog({
-      type: 'info',
-      title: '업데이트 준비 완료',
-      message: '업데이트 다운로드가 완료되었습니다.',
-      detail: '지금 앱을 다시 시작하면 새 버전이 설치됩니다.',
-      buttons: ['지금 재시작', '나중에'],
-      defaultId: 0,
-      cancelId: 1,
+  autoUpdater.on('update-available', (info) => {
+    sendUpdaterStatus({
+      status: 'available',
+      version: info.version,
+      releaseName: info.releaseName || `v${info.version}`,
+      releaseDate: info.releaseDate || '',
+      notes: normalizeReleaseNotes(info.releaseNotes),
     });
-
-    if (result.response === 0) {
-      autoUpdater.quitAndInstall();
-    }
   });
 
-  autoUpdater.on('error', async (error) => {
+  autoUpdater.on('update-not-available', () => {
+    sendUpdaterStatus({ status: 'not-available' });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdaterStatus({
+      status: 'downloading',
+      percent: progress.percent || 0,
+      bytesPerSecond: progress.bytesPerSecond || 0,
+      transferred: progress.transferred || 0,
+      total: progress.total || 0,
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (event) => {
+    sendUpdaterStatus({
+      status: 'downloaded',
+      version: event.version,
+      releaseName: event.releaseName || `v${event.version}`,
+      releaseDate: event.releaseDate || '',
+      notes: normalizeReleaseNotes(event.releaseNotes),
+    });
+  });
+
+  autoUpdater.on('error', (error) => {
     console.error('[auto-update] error:', error);
     if (updateErrorShown) return;
     updateErrorShown = true;
 
-    await showSingleUpdateDialog({
-      type: 'warning',
-      title: '업데이트 확인 실패',
-      message: '업데이트를 확인하지 못했습니다.',
-      detail: '네트워크 상태 또는 배포 설정을 확인한 뒤 다시 실행해 주세요.',
-      buttons: ['확인'],
-      defaultId: 0,
+    sendUpdaterStatus({
+      status: 'error',
+      message: '업데이트를 확인하거나 다운로드하는 중 문제가 발생했습니다.',
+      detail: error?.message || '네트워크 상태 또는 배포 설정을 확인해 주세요.',
     });
+  });
+
+  ipcMain.handle('updater:check', async () => {
+    if (!hasUpdateConfig()) return { ok: false, reason: 'disabled' };
+    updateErrorShown = false;
+    await autoUpdater.checkForUpdates();
+    return { ok: true };
+  });
+
+  ipcMain.handle('updater:download', async () => {
+    if (!hasUpdateConfig()) return { ok: false, reason: 'disabled' };
+    await autoUpdater.downloadUpdate();
+    return { ok: true };
+  });
+
+  ipcMain.handle('updater:restart', async () => {
+    if (!hasUpdateConfig()) return { ok: false, reason: 'disabled' };
+    // Silent install + rerun app after apply.
+    autoUpdater.quitAndInstall(true, true);
+    return { ok: true };
   });
 
   setTimeout(() => {
@@ -115,6 +147,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'electron-preload.cjs'),
     },
   });
 
