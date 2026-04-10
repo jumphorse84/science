@@ -97,6 +97,14 @@ const formatReleaseDate = (value: string) => {
   return parsed.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
 };
 
+const getFilePreviewType = (file: any) => {
+  const source = `${file?.name || ''} ${file?.url || ''}`.toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/.test(source)) return 'image';
+  if (/\.pdf(\?|$)/.test(source)) return 'pdf';
+  if (/\.(txt|md|json|csv|log)(\?|$)/.test(source)) return 'text';
+  return 'external';
+};
+
 const normalizeReleaseHighlights = (notes: any) => {
   const fallback = [
     { tone: '개선', title: '업데이트 준비 흐름 개선', body: '기본 설치창 대신 앱 내부에서 업데이트 안내와 적용 흐름을 확인할 수 있습니다.' },
@@ -295,6 +303,9 @@ export default function App() {
     errorMessage: '',
     errorDetail: ''
   });
+  const [filePreview, setFilePreview] = useState<any>(null);
+  const [textPreviewContent, setTextPreviewContent] = useState('');
+  const [isTextPreviewLoading, setIsTextPreviewLoading] = useState(false);
   
   const [memos, setMemos] = useState<any[]>([
     { id: '1', x: 50, y: 50, color: '#fef08a', text: '더블 클릭하여 메모를 작성하세요' }
@@ -495,6 +506,30 @@ export default function App() {
     });
   }, []);
 
+  useEffect(() => {
+    if (!filePreview || filePreview.type !== 'text' || !filePreview.url) return;
+
+    let isCancelled = false;
+    setIsTextPreviewLoading(true);
+    setTextPreviewContent('');
+
+    fetch(filePreview.url)
+      .then((response) => response.text())
+      .then((text) => {
+        if (!isCancelled) setTextPreviewContent(text);
+      })
+      .catch(() => {
+        if (!isCancelled) setTextPreviewContent('미리보기를 불러오지 못했습니다. 외부 열기를 이용해 주세요.');
+      })
+      .finally(() => {
+        if (!isCancelled) setIsTextPreviewLoading(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [filePreview]);
+
   const handleDismissUpdateFlow = () => {
     setUpdateFlow((prev: any) => ({ ...prev, visible: false }));
   };
@@ -514,6 +549,15 @@ export default function App() {
     if (!window.scienceUpdater?.restartToUpdate) return;
     setUpdateFlow((prev: any) => ({ ...prev, stage: 'restarting', visible: true }));
     await window.scienceUpdater.restartToUpdate();
+  };
+
+  const openFilePreview = (file: any) => {
+    const type = getFilePreviewType(file);
+    if (type === 'external') {
+      if (file?.url) window.open(file.url, '_blank');
+      return;
+    }
+    setFilePreview({ ...file, type });
   };
 
   useEffect(() => {
@@ -1046,6 +1090,7 @@ export default function App() {
     .filter((task: any) => task.dDay !== null && task.dDay <= 7).sort((a: any, b: any) => a.dDay - b.dDay);
 
   const pinnedTasks = allSubTasks.filter((t: any) => t.isPinned);
+  const urgentFocusTasks = upcomingTasks.filter((task: any) => task.dDay <= 3);
 
   const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
   const getFirstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
@@ -1382,7 +1427,76 @@ export default function App() {
           )}
 
           {!activeCategory && !isEditMode && (upcomingTasks.length > 0 || pinnedTasks.length > 0) && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <div className="space-y-4 mb-6">
+              {urgentFocusTasks.length > 0 && (
+                <div className="overflow-hidden rounded-[2.25rem] border border-red-200/70 bg-gradient-to-br from-red-50 via-white to-amber-50 shadow-sm dark:border-red-900/40 dark:from-red-950/30 dark:via-slate-900 dark:to-amber-950/20">
+                  <div className="flex flex-col gap-5 p-5 sm:p-6">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="inline-flex items-center rounded-full bg-red-100 px-3 py-1 text-[11px] font-black tracking-[0.18em] text-red-600 dark:bg-red-900/40 dark:text-red-300">
+                          DEADLINE FOCUS
+                        </div>
+                        <h3 className="mt-3 flex items-center text-xl font-black tracking-tight text-slate-900 dark:text-white">
+                          <Bell className="mr-2 h-5 w-5 text-red-500" /> 마감 임박 집중 관리
+                        </h3>
+                        <p className="mt-1 text-sm font-bold text-slate-500 dark:text-slate-400">
+                          D-3 이하 업무만 모았습니다. 오늘 꼭 챙겨야 할 항목을 먼저 확인해 주세요.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 sm:min-w-[280px]">
+                        <div className="rounded-2xl bg-white/80 px-4 py-3 text-center shadow-sm dark:bg-slate-900/70">
+                          <p className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-400">전체</p>
+                          <p className="mt-1 text-2xl font-black text-slate-900 dark:text-white">{urgentFocusTasks.length}</p>
+                        </div>
+                        <div className="rounded-2xl bg-white/80 px-4 py-3 text-center shadow-sm dark:bg-slate-900/70">
+                          <p className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-400">D-Day</p>
+                          <p className="mt-1 text-2xl font-black text-red-600 dark:text-red-300">{urgentFocusTasks.filter((task: any) => task.dDay === 0).length}</p>
+                        </div>
+                        <div className="rounded-2xl bg-white/80 px-4 py-3 text-center shadow-sm dark:bg-slate-900/70">
+                          <p className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-400">지연</p>
+                          <p className="mt-1 text-2xl font-black text-amber-600 dark:text-amber-300">{urgentFocusTasks.filter((task: any) => task.dDay < 0).length}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                      {urgentFocusTasks.slice(0, 6).map((task: any) => (
+                        <button
+                          key={`urgent-${task.id}`}
+                          onClick={() => handleCategoryClick(categories.find(c => c.id === task.categoryId))}
+                          className="group flex items-center justify-between rounded-[1.4rem] border border-white/80 bg-white/90 p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900/80"
+                        >
+                          <div className="flex min-w-0 items-start gap-3">
+                            <span className={`mt-0.5 rounded-xl px-2.5 py-1 text-[11px] font-black shrink-0 ${
+                              task.dDay < 0
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                : task.dDay === 0
+                                  ? 'bg-red-500 text-white'
+                                  : 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-300'
+                            }`}>
+                              {task.dDay < 0 ? `D+${Math.abs(task.dDay)}` : task.dDay === 0 ? 'D-Day' : `D-${task.dDay}`}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-black text-slate-900 dark:text-white">{task.name}</p>
+                              <p className="mt-1 truncate text-xs font-bold text-slate-400 dark:text-slate-500">{task.categoryTitle}</p>
+                              {task.categoryAssignee && (
+                                <p className="mt-1 text-[11px] font-bold text-blue-600 dark:text-blue-300">
+                                  담당 {task.categoryAssignee.split(' ')[0]}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="ml-3 shrink-0 text-right">
+                            <p className="text-xs font-black text-slate-500 dark:text-slate-400">{task.dueDate}</p>
+                            <ChevronRight className="ml-auto mt-2 h-4 w-4 text-slate-300 transition-colors group-hover:text-red-500" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {upcomingTasks.length > 0 && (
                 <div className="p-4 bg-red-50/50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 rounded-[2rem] shadow-sm animate-in fade-in slide-in-from-top-4 flex flex-col">
                   <h3 className="text-base font-black text-red-800 dark:text-red-400 mb-2 flex items-center px-1">
@@ -1441,6 +1555,7 @@ export default function App() {
                   </div>
                 </div>
               )}
+            </div>
             </div>
           )}
 
@@ -1959,7 +2074,7 @@ export default function App() {
                           <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 border-dashed">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               {subTask.files.map((file: any) => (
-                                <button key={file.id} onClick={() => file.url && window.open(file.url, '_blank')} className="flex items-center justify-between p-2.5 bg-gray-50/80 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-blue-50 text-left">
+                                <button key={file.id} onClick={() => openFilePreview(file)} className="flex items-center justify-between p-2.5 bg-gray-50/80 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-blue-50 text-left">
                                   <div className="flex items-center overflow-hidden pr-2">
                                     <FileText className="w-4 h-4 text-blue-500 mr-2 shrink-0" /><span className="text-sm font-medium text-gray-700 dark:text-gray-200 truncate">{file.name}</span>
                                   </div>
@@ -2496,6 +2611,48 @@ export default function App() {
           </div>
         </div>
       )}
+        {filePreview && (
+          <div className="fixed inset-0 z-[175] flex items-center justify-center bg-slate-950/55 backdrop-blur-sm p-4">
+            <div className="flex w-full max-w-5xl flex-col overflow-hidden rounded-[2rem] border border-white/20 bg-white shadow-2xl dark:bg-slate-900">
+              <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+                <div className="min-w-0">
+                  <p className="truncate text-lg font-black text-slate-900 dark:text-white">{filePreview.name}</p>
+                  <p className="mt-1 text-xs font-bold text-slate-400 dark:text-slate-500">
+                    {filePreview.type === 'image' ? '이미지 미리보기' : filePreview.type === 'pdf' ? 'PDF 미리보기' : '텍스트 미리보기'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => filePreview.url && window.open(filePreview.url, '_blank')}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    외부 열기
+                  </button>
+                  <button onClick={() => setFilePreview(null)} className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+              <div className="min-h-[60vh] bg-slate-50 dark:bg-slate-950">
+                {filePreview.type === 'image' && (
+                  <div className="flex h-[70vh] items-center justify-center p-6">
+                    <img src={filePreview.url} alt={filePreview.name} className="max-h-full max-w-full rounded-2xl object-contain shadow-xl" />
+                  </div>
+                )}
+                {filePreview.type === 'pdf' && (
+                  <iframe title={filePreview.name} src={filePreview.url} className="h-[70vh] w-full bg-white" />
+                )}
+                {filePreview.type === 'text' && (
+                  <div className="h-[70vh] overflow-auto p-6 custom-scrollbar">
+                    <pre className="whitespace-pre-wrap rounded-2xl border border-slate-200 bg-white p-5 text-sm font-medium leading-relaxed text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                      {isTextPreviewLoading ? '미리보기를 불러오는 중입니다...' : textPreviewContent}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {updateFlow.visible && (
           <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-sm z-[170] flex items-center justify-center p-4 animate-in fade-in duration-200">
             <div className="w-full max-w-2xl overflow-hidden rounded-[2rem] border border-white/20 bg-white/95 shadow-2xl dark:bg-slate-900/95">
